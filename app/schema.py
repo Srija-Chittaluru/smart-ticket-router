@@ -1,4 +1,5 @@
 CATEGORIES = [
+    "Unclassified",
     "Frontend Issue",
     "Backend Issue",
     #"Technical Issue",
@@ -72,6 +73,7 @@ PRIORITIES (choose exactly one): {", ".join(PRIORITIES)}
 TEAMS (choose exactly one): {", ".join(TEAMS)}
 
 Category guidance:
+- Unclassified: The input does not contain a recognizable support request, consists primarily of random characters, meaningless text, or cannot be interpreted as a valid support ticket. Do not infer or guess the user's intent.
 - Frontend Issue: Problems visible in the user interface such as buttons not working, pages not loading correctly, layout issues, forms, navigation, client-side validation, browser-specific issues, or display/rendering problems.
 - Backend Issue: Problems involving servers, APIs, databases, authentication services, internal processing, timeouts, failed requests, 
 unexpected server errors (5xx), data retrieval/storage failures, or business logic failures.
@@ -108,16 +110,33 @@ Edge case handling:
 1. Angry/emotional tone: strip the emotion out and classify based on the
    underlying facts stated in the message. Reasoning should cite the facts
    (e.g. "3 days of total outage"), not the tone.
-2. Very short or vague messages (e.g. a single word like "broken"): do NOT
-   guess wildly. Set clarification_needed=true, choose the closest-fit
-   category (usually "Technical Issue" or "General Inquiry"), priority
-   "Medium" (unknown severity -- don't assume High or Low), team
-   "Tier 1 Support", and explain in reasoning that more detail is needed
-   from the customer before final routing.
-3. Ambiguous tickets that plausibly fit two categories: pick the single
-   category tied to the primary blocking problem (the thing preventing the
-   customer from resolving the rest themselves) and explicitly name the
-   other plausible category you rejected and why, in the reasoning field.
+2. Very short or vague messages:
+   - If the ticket contains fewer than two meaningful words or is too vague to determine the exact issue, do not guess or infer the user's intent.
+   - Set clarification_needed=true.
+   - Set category to "Unclassified".
+   - Assign the ticket to "Tier 1 Support".
+   - Set priority to "Low".
+   - In the reasoning field, state that the ticket does not contain enough information for accurate classification and request a clearer description from the user.
+3. Tickets containing multiple issues:
+   - If a ticket contains issues that belong to multiple categories, choose exactly ONE category for the output.
+   - Select the category representing the most critical customer issue that should be addressed first.
+   - Do NOT return multiple categories.
+   - In the reasoning field, mention any additional issue(s) detected and identify their likely category.
+   - Use the following category precedence when deciding the primary category:
+     1. Billing & Payments
+     2. Account Access
+     3. Backend Issue
+     4. Frontend Issue
+     5. Bug Report
+     6. Feature Request
+     7. General Inquiry
+4. Invalid or gibberish input:
+   - If the input consists primarily of random characters, meaningless text, or does not contain a recognizable support request, do not attempt to infer or guess the user's intent.
+   - Set category to "Unclassified".
+   - Set priority to "Low".
+   - Set assigned_team to "Tier 1 Support".
+   - Set clarification_needed=true.
+   - In the reasoning field, state that the input is not a valid support ticket and ask the user to provide a clear description of the issue.
 
 Always return all five fields. reasoning must be one sentence and must be
 specific to this message (no generic boilerplate).
