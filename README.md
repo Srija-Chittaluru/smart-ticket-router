@@ -7,7 +7,8 @@ message, it returns structured JSON: `category`, `priority` (High/Medium/Low),
 
 Built for the "Smart Ticket Router" mission: prompt design for structured
 output, JSON schema enforcement, handling AI unreliability, and building a
-reusable classification service behind a web form.
+reusable classification service behind a web form. Every successfully
+routed ticket is also persisted to PostgreSQL with a unique ticket ID.
 
 ## How it works
 
@@ -23,7 +24,12 @@ reusable classification service behind a web form.
   still fails — returns a safe, clearly-labeled fallback classification
   instead of raising, so a malformed AI response can never crash the caller.
 - `app/web.py` + `app/templates/index.html` — a minimal FastAPI web form
-  (and a `/api/route` JSON endpoint) for live demoing.
+  (and a `/api/route` JSON endpoint) for live demoing. Generates a fresh
+  UUID per request, saves successfully classified tickets to PostgreSQL,
+  and returns the `ticket_id` alongside the classification.
+- `app/db.py` — SQLAlchemy engine/session setup, the `Ticket` ORM model
+  (mirrors the `tickets` table), `init_db()` (creates the table on
+  startup), and `get_db()` (per-request database session for FastAPI).
 - `scripts/run_batch.py` — batch-routes the demo tickets by calling
   `route_ticket()` directly and records timing, for the manual-vs-AI
   comparison below.
@@ -46,9 +52,30 @@ Requires Python 3.9+ and an OpenAI API key with access to a model that
 supports Structured Outputs (default: `gpt-4o-mini`, configurable via
 `OPENAI_MODEL` in `.env`).
 
+### Database
+
+Requires a running PostgreSQL server. Easiest local option on Mac is
+[Postgres.app](https://postgresapp.com/) — install it, click **Initialize**,
+then create the database:
+
+```bash
+createdb ticket_router
+```
+
+Set `DATABASE_URL` in `.env` to match your setup, e.g.:
+
+```
+DATABASE_URL=postgresql://<your-username>@localhost:5432/ticket_router
+```
+
+The `tickets` table is created automatically on app startup (`init_db()`
+in `app/db.py`) — no manual migration step needed.
+
 ## Running it
 
 ### Web form
+
+Make sure PostgreSQL is running first (see Database setup above), then:
 
 ```bash
 uvicorn app.web:app --reload
@@ -106,6 +133,29 @@ Three layers, from strongest to last-resort:
    failed and it was routed for manual triage). The caller never sees an
    exception or a crash for a well-formed input string.
 
+`route_ticket()` also tags its return value with `is_fallback` (`True` only
+on that last-resort path). `app/web.py` uses this to skip persistence
+entirely on failed classifications — see below.
+
+## Persisting tickets to PostgreSQL
+
+Every request gets a fresh `uuid.uuid4()` ticket ID, generated in
+`app/web.py`, even if the exact same message is submitted twice. That ID
+is saved to the `tickets` table (via the `Ticket` model in `app/db.py`)
+**only when classification succeeded** — i.e. `is_fallback` is `False`.
+If the AI response was invalid/unparseable after all retries, nothing is
+written to the database, per the fallback handling above.
+
+The saved row (`ticket_id`, `ticket_text`, `category`, `priority`,
+`assigned_team`, `reasoning`, `created_at`) and the `ticket_id` are
+returned alongside the existing JSON response, and shown in the web UI.
+
+To inspect what's been stored:
+
+```bash
+psql -d ticket_router -c "SELECT ticket_id, ticket_text, category, priority, assigned_team, created_at FROM tickets ORDER BY created_at DESC;"
+```
+
 ## Edge cases (required deliverable)
 
 | # | Case | Input | Handling |
@@ -160,7 +210,8 @@ model's `reasoning` against an independent, obvious ground truth:
 app/
   schema.py       taxonomy + JSON schema + system prompt
   router.py       route_ticket() — the reusable core service
-  web.py          FastAPI web form + JSON API
+  db.py           SQLAlchemy engine/session, Ticket model, init_db(), get_db()
+  web.py          FastAPI web form + JSON API + ticket persistence
   templates/
     index.html
 data/
