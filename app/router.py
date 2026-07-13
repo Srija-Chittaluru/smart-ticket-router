@@ -112,18 +112,22 @@ def _validate(parsed: dict) -> None:
 def route_ticket(message: str, model: str | None = None) -> dict:
     """Classify a single raw support message into structured routing fields.
 
-    Returns a dict with category, priority, assigned_team, reasoning, and
-    clarification_needed. Never raises for a well-formed `message` string --
-    on repeated LLM/parse failures it returns FALLBACK_RESPONSE instead of
-    crashing the caller.
+    Returns a dict with category, priority, assigned_team, reasoning,
+    clarification_needed, and is_fallback (True when classification could
+    not be completed and FALLBACK_RESPONSE was returned instead). Never
+    raises for a well-formed `message` string -- on repeated LLM/parse
+    failures it returns FALLBACK_RESPONSE instead of crashing the caller.
     """
     if not isinstance(message, str) or not message.strip():
         result = dict(FALLBACK_RESPONSE)
         result["reasoning"] = "Empty message received; routed to Tier 1 for manual triage."
+        result["is_fallback"] = True
         return result
 
     if os.getenv("MOCK_MODE") == "1":
-        return _mock_classify(message)
+        result = _mock_classify(message)
+        result["is_fallback"] = False
+        return result
 
     model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -133,6 +137,7 @@ def route_ticket(message: str, model: str | None = None) -> dict:
             raw = _call_llm(message, model)
             parsed = json.loads(raw)
             _validate(parsed)
+            parsed["is_fallback"] = False
             return parsed
         except (json.JSONDecodeError, ValidationError) as exc:
             last_error = exc
@@ -146,4 +151,5 @@ def route_ticket(message: str, model: str | None = None) -> dict:
         f"Automatic classification failed after {MAX_ATTEMPTS} attempts "
         f"({type(last_error).__name__}); routed to Tier 1 for manual triage."
     )
+    fallback["is_fallback"] = True
     return fallback

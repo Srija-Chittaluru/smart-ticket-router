@@ -1,5 +1,7 @@
 CATEGORIES = [
-    "Technical Issue",
+    "Frontend Issue",
+    "Backend Issue",
+    #"Technical Issue",
     "Billing & Payments",
     "Account Access",
     "Bug Report",
@@ -11,7 +13,9 @@ PRIORITIES = ["High", "Medium", "Low"]
 
 TEAMS = [
     "Tier 1 Support",
-    "Tier 2 Engineering",
+    #"Tier 2 Engineering",
+    "Frontend Team",
+    "Backend Team",
     "Billing Team",
     "Account & Security Team",
     "Product Team",
@@ -68,8 +72,12 @@ PRIORITIES (choose exactly one): {", ".join(PRIORITIES)}
 TEAMS (choose exactly one): {", ".join(TEAMS)}
 
 Category guidance:
-- Technical Issue: product/service isn't working as expected for the user (outages, errors, crashes, login/loading failures) when it's not clearly a code defect report.
-- Bug Report: user is reporting a specific reproducible defect in the software.
+- Frontend Issue: Problems visible in the user interface such as buttons not working, pages not loading correctly, layout issues, forms, navigation, client-side validation, browser-specific issues, or display/rendering problems.
+- Backend Issue: Problems involving servers, APIs, databases, authentication services, internal processing, timeouts, failed requests, 
+unexpected server errors (5xx), data retrieval/storage failures, or business logic failures.
+- When a software defect clearly belongs to the user interface, classify it as "Frontend Issue" instead of "Bug Report". 
+- When a software defect clearly belongs to APIs, servers, databases, authentication services, or backend processing, classify it as "Backend Issue" instead of "Bug Report".
+- Use "Bug Report" only when the message reports a reproducible software defect but there is not enough information to determine whether it is a frontend or backend issue.
 - Billing & Payments: charges, invoices, refunds, subscription/payment problems.
 - Account Access: login, password reset, locked/suspended accounts, permissions.
 - Feature Request: user wants new or changed functionality; nothing is broken.
@@ -86,8 +94,11 @@ An angry or all-caps message about a trivial issue is still Low/Medium.
 A calm, politely-worded message about a total outage is still High.
 
 Team routing guidance:
-- Tier 1 Support: general technical issues, how-to questions, first line triage.
-- Tier 2 Engineering: confirmed bugs, complex/technical issues Tier 1 can't resolve.
+- Tier 1 Support: First point of contact for general troubleshooting, unclear issues, and basic technical support.
+- Frontend Team: User interface issues including buttons, pages, forms, layouts, browser compatibility, navigation, rendering problems, 
+client-side validation, and frontend application errors.
+- Backend Team: Server-side issues including APIs, databases, authentication services, business logic, server errors (5xx), data processing, 
+integrations, performance, and infrastructure-related problems.
 - Billing Team: all billing/payment/subscription/refund issues.
 - Account & Security Team: login, access, permissions, suspected security issues.
 - Product Team: feature requests, product feedback.

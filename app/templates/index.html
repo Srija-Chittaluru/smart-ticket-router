@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Ticket Router</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:'Inter',sans-serif;
+}
+
+body{
+    background:#f5f7fb;
+    color:#1f2937;
+}
+
+.container{
+    width:90%;
+    max-width:900px;
+    margin:40px auto;
+}
+
+.header{
+    background:linear-gradient(135deg,#2563eb,#1e40af);
+    color:white;
+    border-radius:18px;
+    padding:35px;
+    text-align:center;
+    box-shadow:0 10px 30px rgba(0,0,0,.15);
+}
+
+.header h1{
+    font-size:34px;
+    margin-bottom:10px;
+}
+
+.header p{
+    font-size:16px;
+    opacity:.9;
+}
+
+.card{
+    background:white;
+    margin-top:30px;
+    border-radius:16px;
+    padding:28px;
+    box-shadow:0 8px 25px rgba(0,0,0,.08);
+}
+
+.card h2{
+    margin-bottom:18px;
+    color:#1e3a8a;
+}
+
+textarea{
+    width:100%;
+    min-height:170px;
+    resize:vertical;
+    border:1px solid #d1d5db;
+    border-radius:12px;
+    padding:18px;
+    font-size:15px;
+    outline:none;
+    transition:.3s;
+}
+
+textarea:focus{
+    border-color:#2563eb;
+    box-shadow:0 0 0 4px rgba(37,99,235,.15);
+}
+
+button{
+    margin-top:20px;
+    width:100%;
+    border:none;
+    border-radius:12px;
+    padding:15px;
+    background:#2563eb;
+    color:white;
+    font-size:17px;
+    font-weight:600;
+    cursor:pointer;
+    transition:.3s;
+}
+
+button:hover{
+    background:#1e40af;
+}
+
+.result-card{
+
+    background:white;
+    margin-top:30px;
+    border-radius:16px;
+    padding:30px;
+    box-shadow:0 8px 25px rgba(0,0,0,.08);
+
+}
+
+.result-title{
+
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:25px;
+
+}
+
+.result-title h2{
+
+    color:#1e3a8a;
+
+}
+
+.grid{
+
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:18px;
+
+}
+
+.info{
+
+    background:#f8fafc;
+    border-left:5px solid #2563eb;
+    border-radius:12px;
+    padding:16px;
+
+}
+
+.info label{
+
+    display:block;
+    color:#6b7280;
+    font-size:13px;
+    margin-bottom:8px;
+    font-weight:600;
+
+}
+
+.info span{
+
+    font-size:16px;
+    font-weight:600;
+
+}
+
+.reasoning{
+
+    margin-top:22px;
+    background:#f8fafc;
+    border-radius:12px;
+    padding:18px;
+    border-left:5px solid #2563eb;
+
+}
+
+.reasoning label{
+
+    display:block;
+    margin-bottom:8px;
+    color:#6b7280;
+    font-size:13px;
+    font-weight:600;
+
+}
+
+.priority-high{
+
+    background:#fee2e2;
+    color:#dc2626;
+    padding:6px 14px;
+    border-radius:25px;
+    font-weight:700;
+
+}
+
+.priority-medium{
+
+    background:#fef3c7;
+    color:#b45309;
+    padding:6px 14px;
+    border-radius:25px;
+    font-weight:700;
+
+}
+
+.priority-low{
+
+    background:#dcfce7;
+    color:#15803d;
+    padding:6px 14px;
+    border-radius:25px;
+    font-weight:700;
+
+}
+
+.meta{
+
+    margin-top:20px;
+    color:#6b7280;
+    font-size:14px;
+
+}
+
+.clarify{
+
+    margin-top:18px;
+    background:#fff7ed;
+    color:#c2410c;
+    padding:12px;
+    border-radius:10px;
+    border-left:5px solid orange;
+    font-weight:600;
+
+}
+
+.footer{
+
+    text-align:center;
+    margin:40px 0;
+    color:#9ca3af;
+    font-size:14px;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+
+<h1>🎫 Smart Ticket Router</h1>
+
+<p>
+Automatically classify and route customer support tickets using AI.
+Receive category, priority, assigned team, and reasoning in seconds.
+</p>
+
+</div>
+
+<div class="card">
+
+<h2>Submit Support Ticket</h2>
+
+<form method="POST">
+
+<textarea
+name="message"
+placeholder="Example: I paid for my subscription but my account is still locked...">{{ message }}</textarea>
+
+<button type="submit">
+🚀 Analyze & Route Ticket
+</button>
+
+</form>
+
+</div>
+
+{% if result %}
+
+<div class="result-card">
+
+<div class="result-title">
+
+<h2>Routing Result</h2>
+
+</div>
+
+<div class="grid">
+
+<div class="info">
+
+<label>Category</label>
+
+<span>{{ result.category }}</span>
+
+</div>
+
+<div class="info">
+
+<label>Priority</label>
+
+{% if result.priority=="High" %}
+<span class="priority-high">🔴 HIGH</span>
+{% elif result.priority=="Medium" %}
+<span class="priority-medium">🟠 MEDIUM</span>
+{% else %}
+<span class="priority-low">🟢 LOW</span>
+{% endif %}
+
+</div>
+
+<div class="info">
+
+<label>Assigned Team</label>
+
+<span>{{ result.assigned_team }}</span>
+
+</div>
+
+{% if result.ticket_id %}
+<div class="info">
+
+<label>Ticket ID</label>
+
+<span>{{ result.ticket_id }}</span>
+
+</div>
+{% endif %}
+
+</div>
+
+<div class="reasoning">
+
+<label>Reasoning</label>
+
+<p>{{ result.reasoning }}</p>
+
+</div>
+
+{% if result.clarification_needed %}
+<div class="clarify">
+⚠ Customer clarification is required before final routing.
+</div>
+{% endif %}
+
+<div class="meta">
+⚡ Routed successfully in <strong>{{ elapsed }} seconds</strong>
+</div>
+
+</div>
+
+{% endif %}
+
+<div class="footer">
+
+Smart Ticket Router • AI Powered Support Automation
+
+</div>
+
+</div>
+
+</body>
+</html>
