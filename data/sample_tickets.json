@@ -1,0 +1,91 @@
+[
+  {
+    "id": 1,
+    "message": "This is RIDICULOUS, nothing works and I've been waiting 3 days!!!",
+    "note": "EDGE CASE: angry/emotional tone. Expect High priority based on 'nothing works' + 3-day outage, not the tone."
+  },
+  {
+    "id": 2,
+    "message": "broken",
+    "note": "EDGE CASE: very short/vague message. Expect clarification_needed=true, Medium priority, no crash."
+  },
+  {
+    "id": 3,
+    "message": "I was charged twice for my subscription this month and now I can't even log in to check my account or dispute it.",
+    "note": "EDGE CASE: ambiguous, fits Billing & Payments and Account Access. Reasoning should justify the pick."
+  },
+  {
+    "id": 4,
+    "message": "Our entire team can't access the production dashboard, it's been down for 45 minutes and we're losing sales in real time.",
+    "note": "Known severity: HIGH -- outage, business-critical, no workaround."
+  },
+  {
+    "id": 5,
+    "message": "Could you add a dark mode option to the mobile app? Would be a nice quality-of-life improvement.",
+    "note": "Known severity: LOW -- feature request, nothing broken."
+  },
+  {
+    "id": 6,
+    "message": "The export-to-CSV button on the reports page throws a 500 error every time I click it, but I can still export as PDF as a workaround.",
+    "note": "Known severity: MEDIUM -- confirmed bug, workaround exists."
+  },
+  {
+    "id": 7,
+    "message": "My card was charged $49.99 but I cancelled my plan two weeks ago. Please refund me.",
+    "note": "Known severity: MEDIUM -- billing error, single user, no urgency beyond normal refund SLA."
+  },
+  {
+    "id": 8,
+    "message": "URGENT: I think someone else logged into my account, there are login alerts from a country I've never been to.",
+    "note": "Known severity: HIGH -- security incident."
+  },
+  {
+    "id": 9,
+    "message": "How do I change the currency displayed on my invoices?",
+    "note": "General how-to question, Low priority."
+  },
+  {
+    "id": 10,
+    "message": "The mobile app crashes immediately on launch on my iPhone 15 after the latest update. Completely unusable."
+  },
+  {
+    "id": 11,
+    "message": "Quick question - does your API support pagination on the /orders endpoint?"
+  },
+  {
+    "id": 12,
+    "message": "I've been on hold with billing for an hour and no one has picked up. I just want to know why my invoice doubled this month."
+  },
+  {
+    "id": 13,
+    "message": "Feature suggestion: it would help a lot if we could bulk-export tickets instead of one at a time."
+  },
+  {
+    "id": 14,
+    "message": "getting error code E4021 when trying to sync calendar, happens every time, tried reinstalling"
+  },
+  {
+    "id": 15,
+    "message": "not sure who to ask but is there a way to merge two duplicate customer records in the CRM?"
+  },
+  {
+    "id": 16,
+    "message": "wow"
+  },
+  {
+    "id": 17,
+    "message": "Whole system is down for our entire company, 200+ employees affected, this is costing us thousands per hour, please escalate immediately."
+  },
+  {
+    "id": 18,
+    "message": "just wanted to say the new UI update looks great, nice work team"
+  },
+  {
+    "id": 19,
+    "message": "I forgot my password and the reset email never arrives, checked spam folder too."
+  },
+  {
+    "id": 20,
+    "message": "Can I get a copy of last year's invoices for tax purposes? Not urgent, whenever you get a chance."
+  }
+]
