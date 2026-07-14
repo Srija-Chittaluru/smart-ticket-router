@@ -122,9 +122,15 @@ button:hover{
 .grid{
 
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    grid-template-columns:1fr 1fr;
     gap:18px;
 
+}
+
+@media (max-width:600px){
+    .grid{
+        grid-template-columns:1fr;
+    }
 }
 
 .info{

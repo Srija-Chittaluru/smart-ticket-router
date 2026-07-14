@@ -7,8 +7,11 @@ message, it returns structured JSON: `category`, `priority` (High/Medium/Low),
 
 Built for the "Smart Ticket Router" mission: prompt design for structured
 output, JSON schema enforcement, handling AI unreliability, and building a
-reusable classification service behind a web form. Every successfully
-routed ticket is also persisted to PostgreSQL with a unique ticket ID.
+reusable classification service behind a web form. Every ticket that gets
+routed to a real team is persisted to PostgreSQL with a unique ticket ID;
+tickets that can't be meaningfully routed (gibberish, out-of-scope chat, or
+a failed AI classification) are flagged with `assigned_team: "None"` (or
+`is_fallback`), returned to the caller, but never written to the database.
 
 ## How it works
 
@@ -24,9 +27,10 @@ routed ticket is also persisted to PostgreSQL with a unique ticket ID.
   still fails — returns a safe, clearly-labeled fallback classification
   instead of raising, so a malformed AI response can never crash the caller.
 - `app/web.py` + `app/templates/index.html` — a minimal FastAPI web form
-  (and a `/api/route` JSON endpoint) for live demoing. Generates a fresh
-  UUID per request, saves successfully classified tickets to PostgreSQL,
-  and returns the `ticket_id` alongside the classification.
+  (and a `/api/route` JSON endpoint) for live demoing. Generates a UUID and
+  saves the ticket to PostgreSQL only when it was routed to a real team
+  (`assigned_team != "None"`) and classification didn't fall back; otherwise
+  `ticket_id` is returned as `null`.
 - `app/db.py` — SQLAlchemy engine/session setup, the `Ticket` ORM model
   (mirrors the `tickets` table), `init_db()` (creates the table on
   startup), and `get_db()` (per-request database session for FastAPI).
@@ -128,27 +132,36 @@ Three layers, from strongest to last-resort:
    version differences or client bugs.
 3. **Retry with backoff, then safe fallback** — up to 3 attempts; if all
    fail, returns a fixed fallback response (`category: General Inquiry`,
-   `priority: Medium`, `assigned_team: Tier 1 Support`,
+   `priority: Medium`, `assigned_team: Tier1 Support`,
    `clarification_needed: true`, and a `reasoning` that says classification
    failed and it was routed for manual triage). The caller never sees an
    exception or a crash for a well-formed input string.
 
 `route_ticket()` also tags its return value with `is_fallback` (`True` only
-on that last-resort path). `app/web.py` uses this to skip persistence
-entirely on failed classifications — see below.
+on that last-resort path). `app/web.py` uses this — together with
+`assigned_team`, see below — to skip persistence on failed or unroutable
+classifications.
 
 ## Persisting tickets to PostgreSQL
 
-Every request gets a fresh `uuid.uuid4()` ticket ID, generated in
-`app/web.py`, even if the exact same message is submitted twice. That ID
-is saved to the `tickets` table (via the `Ticket` model in `app/db.py`)
-**only when classification succeeded** — i.e. `is_fallback` is `False`.
-If the AI response was invalid/unparseable after all retries, nothing is
-written to the database, per the fallback handling above.
+`app/web.py` only writes a ticket to the `tickets` table (via the `Ticket`
+model in `app/db.py`) when **both** of these hold:
+
+- classification succeeded (`is_fallback` is `False`) — i.e. the AI
+  response was valid/parseable after retries, per the fallback handling
+  above, and
+- a real team could be assigned (`assigned_team != "None"`) — i.e. the
+  message wasn't gibberish or an out-of-scope/non-support request (see
+  edge cases below).
+
+Only in that case is a `uuid.uuid4()` ticket ID generated and saved. For
+anything that fails either check, `ticket_id` is returned as `null` and
+nothing is written to the database.
 
 The saved row (`ticket_id`, `ticket_text`, `category`, `priority`,
 `assigned_team`, `reasoning`, `created_at`) and the `ticket_id` are
-returned alongside the existing JSON response, and shown in the web UI.
+returned alongside the existing JSON response, and shown in the web UI
+(the `Ticket ID` field is hidden in the UI when it's `null`).
 
 To inspect what's been stored:
 
@@ -161,10 +174,13 @@ psql -d ticket_router -c "SELECT ticket_id, ticket_text, category, priority, ass
 | # | Case | Input | Handling |
 |---|---|---|---|
 | 1 | Angry / emotional tone | `"This is RIDICULOUS, nothing works and I've been waiting 3 days!!!"` | Prompt explicitly instructs the model to base priority only on described impact ("nothing works" + 3-day duration = High), not on tone/punctuation/caps. Reasoning cites the outage duration, not the anger. |
-| 2 | Very short / vague message | `"broken"` | Prompt instructs the model to set `clarification_needed: true`, default to `Medium` priority (unknown severity — don't guess High or Low), route to `Tier 1 Support` for triage, and explain in `reasoning` that more detail is needed. No crash. |
-| 3 | Ambiguous ticket (fits 2 categories) | `"I was charged twice for my subscription this month and now I can't even log in to check my account or dispute it."` (Billing & Payments vs. Account Access) | Prompt instructs the model to pick the category tied to the *primary blocking problem* and name the rejected alternative in `reasoning` (e.g. picks Account Access because login is the blocker preventing the customer from resolving the billing issue themselves). |
+| 2 | Very short / vague message | `"broken"` | Prompt instructs the model to set `clarification_needed: true`, `category: "Unclassified"`, `priority: "Low"`, route to `Tier1 Support`, and explain in `reasoning` that there isn't enough information to classify and ask the customer for more detail. No crash. Ticket is still persisted (a real team was assigned). |
+| 3 | Ticket with multiple issues (fits 2+ categories) | `"I was charged twice for my subscription this month and now I can't even log in to check my account or dispute it."` (Billing & Payments vs. Account Access) | Prompt instructs the model to pick exactly one category using a fixed precedence order (Billing & Payments > Account Access > Backend Issue > Frontend Issue > Bug Report > Feature Request > General Inquiry) and mention the other detected issue(s) in `reasoning`. For this example, Billing & Payments wins by precedence. |
+| 4 | Invalid / gibberish input | random characters or text with no recognizable support request | Prompt instructs the model to not guess intent: set `category: "Unclassified"`, `priority: "Low"`, `assigned_team: "None"`, `clarification_needed: true`, and ask the user for a clear description in `reasoning`. Since `assigned_team` is `"None"`, `app/web.py` does **not** persist it — `ticket_id` comes back `null`. |
+| 5 | Out-of-scope / non-support request | `"hi"`, `"what's the weather today?"`, `"write me a poem"` | Prompt's "Guardrail: Out-of-Scope Requests" instructs the model to recognize greetings, casual chat, jokes, coding/math/translation/weather requests, etc. as not being a support ticket at all: `category: "Unclassified"`, `priority: "Low"`, `assigned_team: "None"`, `clarification_needed: true`. Same as gibberish, not persisted. |
 
-All three are ticket `id: 1, 2, 3` in `data/sample_tickets.json`.
+Cases 1–3 are ticket `id: 1, 2, 3` in `data/sample_tickets.json`. Cases 4–5
+have no dedicated sample ticket yet in that file.
 
 ## Before/after: manual vs. AI routing time
 

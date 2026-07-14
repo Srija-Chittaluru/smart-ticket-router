@@ -32,16 +32,18 @@ class RouteRequest(BaseModel):
 
 def _route_and_persist(message: str, db: Session) -> tuple[dict, float]:
     """Classify the ticket, then save it to Postgres unless the AI
-    classification failed (is_fallback). Returns (result, elapsed_seconds).
+    classification failed (is_fallback) or no team could be assigned
+    (assigned_team == "None"). Returns (result, elapsed_seconds).
     """
     start = time.perf_counter()
     result = route_ticket(message)
     elapsed = time.perf_counter() - start
 
     is_fallback = result.pop("is_fallback", False)
-    ticket_id = uuid.uuid4()
+    unassigned = result["assigned_team"] == "None"
+    ticket_id = None if unassigned else uuid.uuid4()
 
-    if not is_fallback:
+    if not is_fallback and not unassigned:
         db.add(
             Ticket(
                 ticket_id=ticket_id,
@@ -54,7 +56,7 @@ def _route_and_persist(message: str, db: Session) -> tuple[dict, float]:
         )
         db.commit()
 
-    result["ticket_id"] = str(ticket_id)
+    result["ticket_id"] = str(ticket_id) if ticket_id else None
     return result, elapsed
 
 

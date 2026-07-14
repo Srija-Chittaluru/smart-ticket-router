@@ -13,7 +13,7 @@ CATEGORIES = [
 PRIORITIES = ["High", "Medium", "Low"]
 
 TEAMS = [
-    "Tier 1 Support",
+    "Tier1 Support",
     #"Tier 2 Engineering",
     "Frontend Team",
     "Backend Team",
@@ -21,6 +21,7 @@ TEAMS = [
     "Account & Security Team",
     "Product Team",
     "Customer Success",
+    "None",
 ]
 
 TICKET_JSON_SCHEMA = {
@@ -96,33 +97,63 @@ An angry or all-caps message about a trivial issue is still Low/Medium.
 A calm, politely-worded message about a total outage is still High.
 
 Team routing guidance:
-- Tier 1 Support: First point of contact for general troubleshooting, unclear issues, and basic technical support.
-- Frontend Team: User interface issues including buttons, pages, forms, layouts, browser compatibility, navigation, rendering problems, 
+- Tier1 Support: First point of contact for general troubleshooting, unclear issues, and basic technical support.
+- Frontend Team: User interface issues including buttons, pages, forms, layouts, browser compatibility, navigation, rendering problems,
 client-side validation, and frontend application errors.
-- Backend Team: Server-side issues including APIs, databases, authentication services, business logic, server errors (5xx), data processing, 
+- Backend Team: Server-side issues including APIs, databases, authentication services, business logic, server errors (5xx), data processing,
 integrations, performance, and infrastructure-related problems.
 - Billing Team: all billing/payment/subscription/refund issues.
 - Account & Security Team: login, access, permissions, suspected security issues.
 - Product Team: feature requests, product feedback.
 - Customer Success: general inquiries, non-technical relationship/account questions.
+- None: no real team to assign because the input isn't an actionable support request at all (gibberish or out-of-scope chat).
+
+Guardrail: Out-of-Scope Requests
+If the input is not a customer support request, such as greetings, casual conversation, jokes, coding requests, mathematical calculations, translations, weather questions, or general chat:
+- category = "Unclassified"
+- priority = "Low"
+- assigned_team = "None"
+- clarification_needed = true
+The reasoning should explain that the request is outside the scope of the support ticket routing system and ask the user to submit a valid support issue.
 
 Edge case handling:
 1. Angry/emotional tone: strip the emotion out and classify based on the
    underlying facts stated in the message. Reasoning should cite the facts
    (e.g. "3 days of total outage"), not the tone.
-2. Very short or vague messages:
-   - If the ticket contains fewer than two meaningful words or is too vague to determine the exact issue, do not guess or infer the user's intent.
-   - Set clarification_needed=true.
-   - Set category to "Unclassified".
-   - Assign the ticket to "Tier 1 Support".
-   - Set priority to "Low".
-   - In the reasoning field, state that the ticket does not contain enough information for accurate classification and request a clearer description from the user.
-3. Tickets containing multiple issues:
+2. Empty tickets:
+   - If the user submits an empty ticket, a ticket containing only whitespace, or no meaningful text, do NOT attempt to classify it.
+   - Set:
+     • category = "Unclassified"
+     • priority = "Low"
+     • assigned_team = "Tier1 Support"
+     • clarification_needed = true
+   - The reasoning should clearly state that no information was provided and the user must submit a valid support request.
+3. Very short or vague messages:
+- If the message contains one or two meaningful words that clearly relate to customer support (for example: "crashed", "login", "refund", "payment", "password", "invoice", "hacked"), do not guess the exact issue.
+- Set:
+  • category = "Unclassified"
+  • priority = "Low"
+  • assigned_team = "Tier1 Support"
+  • clarification_needed = true
+- The reasoning should state that the message appears to describe a support issue but more information is required for accurate routing.
+- If the message is a greeting, casual conversation, or otherwise does not represent a customer support request (for example: "hi", "hello", "good morning"), treat it as an out-of-scope request.
+- Set:
+  • category = "Unclassified"
+  • priority = "Low"
+  • assigned_team = "None"
+  • clarification_needed = true
+- The reasoning should state that the message is not a valid customer support ticket and ask the user to describe their issue.
+4. Tickets containing multiple issues:
    - If a ticket contains issues that belong to multiple categories, choose exactly ONE category for the output.
    - Select the category representing the most critical customer issue that should be addressed first.
    - Do NOT return multiple categories.
-   - In the reasoning field, mention any additional issue(s) detected and identify their likely category.
-   - Use the following category precedence when deciding the primary category:
+   - In the reasoning field:
+     • Explain the selected issue naturally and professionally.
+     • If other issues are present, briefly mention that additional concerns were identified and may require follow-up.
+     • Do NOT explain the model's decision-making process.
+     • Do NOT use phrases such as "takes precedence", "prioritized over", "higher priority", "selected because", or similar wording.
+     • The reasoning should describe the customer's issue, not how the category was chosen.
+   - When selecting the category, use the following internal decision order:
      1. Billing & Payments
      2. Account Access
      3. Backend Issue
@@ -130,11 +161,12 @@ Edge case handling:
      5. Bug Report
      6. Feature Request
      7. General Inquiry
-4. Invalid or gibberish input:
+   - This decision order is for internal classification only and must never be mentioned in the reasoning.
+5. Invalid or gibberish input:
    - If the input consists primarily of random characters, meaningless text, or does not contain a recognizable support request, do not attempt to infer or guess the user's intent.
    - Set category to "Unclassified".
    - Set priority to "Low".
-   - Set assigned_team to "Tier 1 Support".
+   - Set assigned_team to "None".
    - Set clarification_needed=true.
    - In the reasoning field, state that the input is not a valid support ticket and ask the user to provide a clear description of the issue.
 

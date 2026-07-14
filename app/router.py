@@ -12,7 +12,7 @@ from app.schema import REQUIRED_FIELDS, SYSTEM_PROMPT, TICKET_JSON_SCHEMA
 FALLBACK_RESPONSE = {
     "category": "General Inquiry",
     "priority": "Medium",
-    "assigned_team": "Tier 1 Support",
+    "assigned_team": "Tier1 Support",
     "reasoning": (
         "Automatic classification failed after repeated malformed/invalid "
         "responses; routed to Tier 1 for manual triage rather than left "
@@ -41,9 +41,9 @@ def _mock_classify(message: str) -> dict:
 
     if len(text) < 12:
         return {
-            "category": "Technical Issue",
-            "priority": "Medium",
-            "assigned_team": "Tier 1 Support",
+            "category": "Unclassified",
+            "priority": "Low",
+            "assigned_team": "Tier1 Support",
             "reasoning": "Message is too short to determine severity; flagged for clarification.",
             "clarification_needed": True,
         }
@@ -73,9 +73,9 @@ def _mock_classify(message: str) -> dict:
         }
     if any(w in text for w in ["down", "not working", "nothing works", "crash", "error", "broken"]):
         return {
-            "category": "Technical Issue",
+            "category": "Bug Report",
             "priority": "High",
-            "assigned_team": "Tier 2 Engineering",
+            "assigned_team": "Tier1 Support",
             "reasoning": "Message describes the product being non-functional.",
             "clarification_needed": False,
         }
@@ -120,6 +120,8 @@ def route_ticket(message: str, model: str | None = None) -> dict:
     """
     if not isinstance(message, str) or not message.strip():
         result = dict(FALLBACK_RESPONSE)
+        result["category"] = "Unclassified"
+        result["priority"] = "Low"
         result["reasoning"] = "Empty message received; routed to Tier 1 for manual triage."
         result["is_fallback"] = True
         return result

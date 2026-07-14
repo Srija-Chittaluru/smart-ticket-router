@@ -58,9 +58,9 @@ def test_valid_llm_response_passes_through(monkeypatch):
     monkeypatch.delenv("MOCK_MODE", raising=False)
     valid = json.dumps(
         {
-            "category": "Technical Issue",
+            "category": "Backend Issue",
             "priority": "High",
-            "assigned_team": "Tier 2 Engineering",
+            "assigned_team": "Backend Team",
             "reasoning": "Total outage affecting all users.",
             "clarification_needed": False,
         }
@@ -69,5 +69,5 @@ def test_valid_llm_response_passes_through(monkeypatch):
 
     result = route_ticket("everything is down")
 
-    assert result["category"] == "Technical Issue"
+    assert result["category"] == "Backend Issue"
     assert result["priority"] == "High"
