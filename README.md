@@ -31,19 +31,18 @@ result even when classification fails.
   `assigned_team`, `reasoning`, and `clarification_needed` are generated
   under an OpenAI Structured Outputs schema (`strict: true`), so the model
   can only emit values from the fixed enums defined in `app/schema.py`.
-- **Independent re-validation** — the parsed JSON is checked again with
-  `jsonschema` and a required-field check, rather than trusting that the
-  API's strict mode was honored.
+- **Independent re-validation** — Responses are independently validated
+  against the JSON schema before being returned to the client.
 - **Retry + deterministic fallback** — up to 3 attempts with linear
   backoff on a parse/validation/API failure; if every attempt fails, a
   fixed fallback record (`Tier1 Support`, `clarification_needed: true`) is
   returned instead of an exception.
-- **Impact-based priority rubric** — the prompt explicitly instructs the
-  model to score priority from described business/user impact, not from
-  tone, punctuation, or capitalization.
-- **Deterministic multi-issue resolution** — when a ticket spans two
-  categories (e.g. billing + account access), a fixed precedence order
-  picks exactly one category; the rest is only surfaced in `reasoning`.
+- **Priority determined from business impact** — Priority is assigned solely
+  from the described impact and urgency rather than emotional tone,
+  capitalization, or punctuation.
+- **Rule-based multi-issue routing** — Tickets containing multiple issues
+  are mapped to a single category using a predefined internal precedence
+  order while mentioning additional issues in the reasoning.
 - **Out-of-scope / gibberish detection** — greetings, small talk, and
   unrelated requests (jokes, weather, translation) are recognized as not
   being support tickets at all and routed to `assigned_team: "None"`.
@@ -59,6 +58,9 @@ result even when classification fails.
   tickets and records per-ticket timing; `scripts/compare_times.py` joins
   that against hand-timed manual routing to produce a manual-vs-AI speedup
   table.
+- **Clarification-aware routing** — Instead of guessing when a ticket is
+  incomplete or ambiguous, the system explicitly indicates that additional
+  information is required before confident routing.
 
 ## Architecture / Workflow
 
@@ -88,6 +90,19 @@ owns the call/validate/retry/fallback logic and is the only place that
 talks to OpenAI; `app/web.py` owns the HTTP layer and the persistence
 decision; `app/db.py` owns the SQLAlchemy model and session lifecycle.
 
+## Routing Rules
+
+## Routing Rules
+
+The routing system follows a fixed set of rules to ensure predictable and consistent classifications.
+
+- Exactly one category is returned for every ticket.
+- Priority is determined from the customer's described impact, not emotional tone.
+- Ambiguous or incomplete tickets request clarification instead of guessing.
+- Tickets containing multiple issues are routed to a single primary category while additional concerns are mentioned in the reasoning.
+- Every successful response conforms to the predefined JSON schema.
+- Out-of-scope requests are assigned to `None` and are not persisted.
+  
 ## Tech Stack
 
 **Backend**
@@ -262,6 +277,20 @@ call is mocked in every case, so no API key is needed to run the suite.
 otherwise. `seconds` is the wall-clock time `route_ticket()` took,
 included for the manual-vs-AI comparison.
 
+## Output Guarantees
+
+Every successful routing response follows the predefined JSON schema and always contains the following fields:
+
+| Field | Description |
+|--------|-------------|
+| `category` | Ticket category selected from the predefined taxonomy. |
+| `priority` | High, Medium, or Low based on business impact. |
+| `assigned_team` | Team responsible for handling the request. |
+| `reasoning` | One-sentence explanation describing why the ticket was routed. |
+| `clarification_needed` | Indicates whether additional customer information is required before confident routing. |
+
+The schema does not allow additional properties, ensuring a predictable response format for downstream systems.
+
 ## Example Input and Output
 
 **Request**
@@ -289,9 +318,8 @@ stable at `temperature=0`)
 ```
 
 This is the multi-category edge case: the message fits both "Billing &
-Payments" and "Account Access". The prompt's fixed precedence order picks
-Billing & Payments, and the secondary issue is only mentioned in
-`reasoning`, not returned as a second category.
+Payments" and "Account Access". The system selects the most appropriate 
+primary category while mentioning additional issues in the reasoning.
 
 **Out-of-scope input** — nothing is persisted, `ticket_id` is `null`:
 
@@ -306,6 +334,22 @@ Billing & Payments, and the secondary issue is only mentioned in
   "seconds": 0.91
 }
 ```
+
+## Edge Cases
+
+## Edge Case Handling
+
+The routing system explicitly handles several non-ideal customer inputs to improve reliability and avoid incorrect classifications.
+
+| Input Scenario | System Behavior |
+|----------------|-----------------|
+| Empty ticket | Returns `Unclassified`, assigns `Tier1 Support`, and requests additional information. |
+| Greeting or casual conversation | Marks the request as out-of-scope, assigns no team, and does not persist the ticket. |
+| Very short ticket (e.g. "Login") | Avoids guessing, requests clarification, and routes to Tier1 Support. |
+| Angry or emotional language | Determines priority from business impact rather than tone. |
+| Multiple issues in one ticket | Returns a single category while mentioning additional issues in the reasoning. |
+| Gibberish or invalid input | Returns `Unclassified`, assigns no team, and requests a valid support request. |
+| Invalid model response | Retries automatically before returning a deterministic fallback response. |
 
 ## Design Decisions
 
