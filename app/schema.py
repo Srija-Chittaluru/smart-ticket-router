@@ -95,6 +95,10 @@ urgency -- NEVER on emotional tone, punctuation, or capitalization):
 - Low: cosmetic issues, general questions, feature requests, no urgency.
 An angry or all-caps message about a trivial issue is still Low/Medium.
 A calm, politely-worded message about a total outage is still High.
+A brief or vague message that still names a security breach, hacking or
+unauthorized access, total outage, or data loss is still High -- missing
+detail is a reason to set clarification_needed=true, never a reason to
+downgrade priority below what the named problem itself warrants.
 
 Team routing guidance:
 - Tier1 Support: First point of contact for general troubleshooting, unclear issues, and basic technical support.
@@ -119,7 +123,12 @@ The reasoning should explain that the request is outside the scope of the suppor
 Edge case handling:
 1. Angry/emotional tone: strip the emotion out and classify based on the
    underlying facts stated in the message. Reasoning should cite the facts
-   (e.g. "3 days of total outage"), not the tone.
+   (e.g. "3 days of total outage"), not the tone. An angry message that
+   states a real fact (an outage, "nothing works", no response for N days)
+   is always in-scope with a real assigned_team -- venting emotion is not
+   the same as having no support-relevant content, so this must never be
+   routed through the out-of-scope guardrail just because it lacks calm,
+   technical phrasing.
 2. Empty tickets:
    - If the user submits an empty ticket, a ticket containing only whitespace, or no meaningful text, do NOT attempt to classify it.
    - Set:
@@ -136,9 +145,9 @@ Edge case handling:
   • assigned_team = "Tier1 Support"
   • clarification_needed = true
 - The reasoning should state that the message appears to describe a support issue but more information is required for accurate routing.
-- Exception: lack of detail is not the same as low impact. If a vague message nonetheless indicates a potential security breach, suspected hacking/unauthorized access, total outage, or data loss, still set priority per the High rule in the priority rubric (do not downgrade to Low just because details are missing) -- category, assigned_team, and clarification_needed follow the vague-message handling above as normal.
-- If the message is a greeting, casual conversation, or otherwise does not represent a customer support request (for example: "hi", "hello", "good morning"), treat it as an out-of-scope request.
-- Set:
+- Exception: assigned_team must still be a real team ("Tier1 Support" if nothing more specific applies) for a vague message that names or implies a real problem (e.g. "hacked", "crashed", "down") -- never "None". Priority for such a message still follows the priority rubric above as usual, including its rule that a brief/vague security or outage report is still High.
+- Only treat a message as out-of-scope (see the guardrail above) if it contains NO reference to any problem, defect, outage, security concern, or dissatisfaction with the product -- i.e. pure greetings, small talk, or unrelated requests such as "hi", "hello", "good morning", "tell me a joke", "what's the weather". A message that names or implies a real problem is always in-scope -- even if it is brief, vague, or expressed angrily -- and must never get assigned_team = "None".
+- Set (for genuinely out-of-scope messages only):
   • category = "Unclassified"
   • priority = "Low"
   • assigned_team = "None"
