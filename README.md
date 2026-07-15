@@ -21,6 +21,9 @@ Handing this to an LLM directly doesn't solve it either: a plain prompt-and-pars
 - **Offline dev mode** — `MOCK_MODE=1` swaps the OpenAI call for a deterministic keyword classifier, for developing/testing the form and running the test suite without an API key or cost.
 - **Batch timing tooling** — `scripts/run_batch.py` routes a JSON file of tickets and records per-ticket timing; `scripts/compare_times.py` joins that against hand-timed manual routing to produce a manual-vs-AI speedup table.
 - **Clarification-aware routing** — Instead of guessing when a ticket is incomplete or ambiguous, the system explicitly indicates that additional information is required before confident routing.
+- **Vagueness isn't the same as low severity** — a short message can still describe a security breach, outage, or data loss; the system prompt carves out an explicit exception so these get `priority: "High"` per the rubric instead of being downgraded just because detail is missing.
+- **Empty-ticket guard on the web form** — submitting a blank or whitespace-only message shows an inline "please enter a ticket" error instead of a routing result; `route_ticket()` itself still returns a structured fallback for empty input (used by `/api/route`, the batch script, and the test suite).
+- **Manual-vs-AI comparison in the web UI** — the result view shows the AI's elapsed time next to an illustrative manual-routing baseline and the resulting speedup multiplier, alongside the more rigorous batch comparison tooling below.
 
 ## Architecture / Workflow
 
@@ -46,6 +49,8 @@ flowchart TD
 ```
 
 `app/schema.py` owns the taxonomy and the system prompt; `app/router.py` owns the call/validate/retry/fallback logic and is the only place that talks to OpenAI; `app/web.py` owns the HTTP layer and the persistence decision; `app/db.py` owns the SQLAlchemy model and session lifecycle. Every routing rule (single category per ticket, tone-independent priority, clarification over guessing, schema conformance, non-persistence of out-of-scope tickets) is enforced either by the schema itself or by the system prompt in `app/schema.py`, not by ad-hoc logic elsewhere.
+
+One exception to this diagram: on the HTML form (`POST /`) only, a blank/whitespace-only message never reaches `route_ticket()` at all — `app/web.py` intercepts it first and renders an inline error. `POST /api/route` has no such guard; it always calls `route_ticket()`, so empty input there still flows through the diagram above and returns the structured fallback.
 
 ## Tech Stack
 
@@ -200,10 +205,10 @@ Covers empty input, mock-mode short input, malformed/incomplete LLM JSON (fallba
 | Method | Path | Body | Response |
 |---|---|---|---|
 | `GET` | `/` | — | Renders the HTML form |
-| `POST` | `/` | form-encoded `message` | Re-renders the form with the routing result |
+| `POST` | `/` | form-encoded `message` | Re-renders the form with the routing result, plus elapsed time, a manual-routing baseline, and the speedup multiplier — or an inline error if `message` is blank |
 | `POST` | `/api/route` | `{"message": "string"}` | JSON: `category`, `priority`, `assigned_team`, `reasoning`, `clarification_needed`, `ticket_id`, `seconds` |
 
-`ticket_id` is a UUID string when the ticket was persisted, `null` otherwise. `seconds` is the wall-clock time `route_ticket()` took, included for the manual-vs-AI comparison.
+`ticket_id` is a UUID string when the ticket was persisted, `null` otherwise. `seconds` is the wall-clock time `route_ticket()` took, included for the manual-vs-AI comparison. Unlike the form, `/api/route` has no empty-message guard — a blank `message` is passed straight to `route_ticket()`, which returns its usual structured fallback rather than an error.
 
 **Response fields** — every successful response follows the schema in `app/schema.py` (no additional properties allowed) and always contains:
 
@@ -261,9 +266,11 @@ The routing system explicitly handles several non-ideal customer inputs to impro
 
 | Input Scenario | System Behavior |
 |----------------|-----------------|
-| Empty ticket | Returns `Unclassified`, assigns `Tier1 Support`, and requests additional information. |
+| Empty ticket (web form) | Shows an inline "please enter a ticket" error; `route_ticket()` is never called. |
+| Empty ticket (`/api/route`) | Returns `Unclassified`, assigns `Tier1 Support`, and requests additional information. |
 | Greeting or casual conversation | Marks the request as out-of-scope, assigns no team, and does not persist the ticket. |
 | Very short ticket (e.g. "Login") | Avoids guessing, requests clarification, and routes to Tier1 Support. |
+| Brief but severe report (e.g. "my system is hacked") | Still routed as `priority: "High"` — missing detail doesn't downgrade a security/outage report. |
 | Angry or emotional language | Determines priority from business impact rather than tone. |
 | Multiple issues in one ticket | Returns a single category while mentioning additional issues in the reasoning. |
 | Gibberish or invalid input | Returns `Unclassified`, assigns no team, and requests a valid support request. |
@@ -277,6 +284,7 @@ The routing system explicitly handles several non-ideal customer inputs to impro
 - **FastAPI.** Pydantic request validation (`RouteRequest`) and auto-generated `/docs` come for free, useful for a service exercised both through a form and as a JSON API.
 - **PostgreSQL + SQLAlchemy over SQLite.** UUID primary keys match the `ticket_id` already generated and returned to the caller, and a real server process is closer to an actual deployment than a file-based DB.
 - **`MOCK_MODE` as an explicit escape hatch, not a silent default.** It lets the form and test suite run without an API key, but stays off by default and is called out in `.env.example` and this README so it's never mistaken for the real classification path.
+- **Web-form manual-routing baseline is illustrative, not measured.** `MANUAL_ROUTING_SECONDS = 50` in `app/web.py` is a fixed placeholder used only to render a speedup line in the UI. The methodologically real manual-vs-AI comparison — hand-timed per ticket — is `scripts/compare_times.py` / `results/comparison.md`, not this constant.
 
 ## Challenges & Trade-offs
 
