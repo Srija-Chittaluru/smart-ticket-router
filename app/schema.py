@@ -129,13 +129,14 @@ Edge case handling:
      • clarification_needed = true
    - The reasoning should clearly state that no information was provided and the user must submit a valid support request.
 3. Very short or vague messages:
-- If the message contains one or two meaningful words that clearly relate to customer support (for example: "crashed", "login", "refund", "payment", "password", "invoice", "hacked"), do not guess the exact issue.
+- If the message contains one or two meaningful words that clearly relate to customer support (for example: "crashed", "login", "refund", "payment", "password", "invoice"), do not guess the exact issue.
 - Set:
   • category = "Unclassified"
   • priority = "Low"
   • assigned_team = "Tier1 Support"
   • clarification_needed = true
 - The reasoning should state that the message appears to describe a support issue but more information is required for accurate routing.
+- Exception: lack of detail is not the same as low impact. If a vague message nonetheless indicates a potential security breach, suspected hacking/unauthorized access, total outage, or data loss, still set priority per the High rule in the priority rubric (do not downgrade to Low just because details are missing) -- category, assigned_team, and clarification_needed follow the vague-message handling above as normal.
 - If the message is a greeting, casual conversation, or otherwise does not represent a customer support request (for example: "hi", "hello", "good morning"), treat it as an out-of-scope request.
 - Set:
   • category = "Unclassified"
