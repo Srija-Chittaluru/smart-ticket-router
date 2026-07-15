@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +20,10 @@ load_dotenv()
 app = FastAPI()
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+DEMO_TICKETS_PATH = Path(__file__).parent.parent / "data" / "sample_tickets.json"
+with open(DEMO_TICKETS_PATH) as f:
+    DEMO_TICKETS = json.load(f)
 
 
 @app.on_event("startup")
@@ -63,7 +68,8 @@ def _route_and_persist(message: str, db: Session) -> tuple[dict, float]:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(
-        "index.html", {"request": request, "result": None, "message": "", "elapsed": None}
+        "index.html",
+        {"request": request, "result": None, "message": "", "elapsed": None, "demo_tickets": DEMO_TICKETS},
     )
 
 
@@ -77,6 +83,7 @@ def submit(request: Request, message: str = Form(""), db: Session = Depends(get_
                 "result": None,
                 "message": message,
                 "error": "Please enter a ticket description before submitting.",
+                "demo_tickets": DEMO_TICKETS,
             },
         )
 
@@ -88,6 +95,46 @@ def submit(request: Request, message: str = Form(""), db: Session = Depends(get_
             "result": result,
             "message": message,
             "elapsed": round(elapsed, 2),
+            "demo_tickets": DEMO_TICKETS,
+        },
+    )
+
+
+@app.post("/run-demo", response_class=HTMLResponse)
+async def run_demo(request: Request):
+    """Route a hand-picked subset of the 20 demo tickets directly through
+    route_ticket() (no DB persistence, matching scripts/run_batch.py) and
+    render the results as a table alongside the sidebar."""
+    form = await request.form()
+    selected_ids = {int(tid) for tid in form.getlist("ticket_ids")}
+    selected_tickets = [t for t in DEMO_TICKETS if t["id"] in selected_ids]
+
+    demo_results = []
+    for ticket in selected_tickets:
+        start = time.perf_counter()
+        result = route_ticket(ticket["message"])
+        elapsed = time.perf_counter() - start
+        demo_results.append(
+            {
+                "id": ticket["id"],
+                "message": ticket["message"],
+                "category": result["category"],
+                "priority": result["priority"],
+                "assigned_team": result["assigned_team"],
+                "clarification_needed": result["clarification_needed"],
+                "seconds": round(elapsed, 2),
+            }
+        )
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "result": None,
+            "message": "",
+            "demo_tickets": DEMO_TICKETS,
+            "demo_results": demo_results,
+            "selected_ids": selected_ids,
         },
     )
 

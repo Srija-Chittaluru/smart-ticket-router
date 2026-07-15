@@ -23,7 +23,8 @@ Handing this to an LLM directly doesn't solve it either: a plain prompt-and-pars
 - **Clarification-aware routing** — Instead of guessing when a ticket is incomplete or ambiguous, the system explicitly indicates that additional information is required before confident routing.
 - **Vagueness isn't the same as low severity** — a short message can still describe a security breach, outage, or data loss; the system prompt carves out an explicit exception so these get `priority: "High"` per the rubric instead of being downgraded just because detail is missing.
 - **Empty-ticket guard on the web form** — submitting a blank or whitespace-only message shows an inline "please enter a ticket" error instead of a routing result; `route_ticket()` itself still returns a structured fallback for empty input (used by `/api/route`, the batch script, and the test suite).
-- **Manual-vs-AI comparison in the web UI** — the result view shows the AI's elapsed time next to an illustrative manual-routing baseline and the resulting speedup multiplier, alongside the more rigorous batch comparison tooling below.
+- **Manual-vs-AI comparison in the web UI** — the result view shows the AI's elapsed time next to a static "manual routing takes 3-5 minutes" line, alongside the more rigorous batch comparison tooling below.
+- **In-browser demo batch runner** — a sidebar lists all 20 tickets from `data/sample_tickets.json` with checkboxes; selecting a subset and clicking "Run Selected" (`POST /run-demo`) routes them through `route_ticket()` and renders a results table (category/priority/team/seconds), without persisting to Postgres.
 
 ## Architecture / Workflow
 
@@ -51,6 +52,8 @@ flowchart TD
 `app/schema.py` owns the taxonomy and the system prompt; `app/router.py` owns the call/validate/retry/fallback logic and is the only place that talks to OpenAI; `app/web.py` owns the HTTP layer and the persistence decision; `app/db.py` owns the SQLAlchemy model and session lifecycle. Every routing rule (single category per ticket, tone-independent priority, clarification over guessing, schema conformance, non-persistence of out-of-scope tickets) is enforced either by the schema itself or by the system prompt in `app/schema.py`, not by ad-hoc logic elsewhere.
 
 One exception to this diagram: on the HTML form (`POST /`) only, a blank/whitespace-only message never reaches `route_ticket()` at all — `app/web.py` intercepts it first and renders an inline error. `POST /api/route` has no such guard; it always calls `route_ticket()`, so empty input there still flows through the diagram above and returns the structured fallback.
+
+`POST /run-demo` also bypasses the persistence branch entirely: it calls `route_ticket()` directly for each selected demo ticket (same as `scripts/run_batch.py`) and renders the results as a table, without ever touching Postgres.
 
 ## Tech Stack
 
@@ -113,7 +116,7 @@ Notes on a few non-obvious details:
 - `app/schema.py` is the single source of truth for the taxonomy (`CATEGORIES`, `PRIORITIES`, `TEAMS`); changing what the model can output means changing this file.
 - `app/router.py` has no FastAPI or database dependency, so `route_ticket()` is callable unchanged from the web app, the batch script, or a test.
 - `app/db.py`'s `init_db()` runs on FastAPI startup (creates the table if missing); `get_db()` is the per-request session dependency.
-- `data/sample_tickets.json`'s 20 tickets include the 3 required edge cases (angry tone, vague message, multi-category) plus 5 tagged with an expected severity for spot-checking the model's priority calls.
+- `data/sample_tickets.json`'s 20 tickets include the 3 required edge cases (angry tone, vague message, multi-category) plus 5 tagged with an expected severity for spot-checking the model's priority calls. It's loaded twice: once by `scripts/run_batch.py`, once by `app/web.py` at startup for the demo-ticket sidebar.
 - `scripts/compare_times.py` reads `run_batch.py`'s output plus a manually-filled CSV of stopwatch times to produce `results/comparison.md`.
 
 ## Installation
@@ -204,8 +207,9 @@ Covers empty input, mock-mode short input, malformed/incomplete LLM JSON (fallba
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| `GET` | `/` | — | Renders the HTML form |
-| `POST` | `/` | form-encoded `message` | Re-renders the form with the routing result, plus elapsed time, a manual-routing baseline, and the speedup multiplier — or an inline error if `message` is blank |
+| `GET` | `/` | — | Renders the HTML form and the demo-ticket sidebar |
+| `POST` | `/` | form-encoded `message` | Re-renders the form with the routing result and elapsed time — or an inline error if `message` is blank |
+| `POST` | `/run-demo` | form-encoded `ticket_ids` (repeated) | Re-renders the page with a results table for the selected demo tickets (no persistence) |
 | `POST` | `/api/route` | `{"message": "string"}` | JSON: `category`, `priority`, `assigned_team`, `reasoning`, `clarification_needed`, `ticket_id`, `seconds` |
 
 `ticket_id` is a UUID string when the ticket was persisted, `null` otherwise. `seconds` is the wall-clock time `route_ticket()` took, included for the manual-vs-AI comparison. Unlike the form, `/api/route` has no empty-message guard — a blank `message` is passed straight to `route_ticket()`, which returns its usual structured fallback rather than an error.
@@ -284,7 +288,8 @@ The routing system explicitly handles several non-ideal customer inputs to impro
 - **FastAPI.** Pydantic request validation (`RouteRequest`) and auto-generated `/docs` come for free, useful for a service exercised both through a form and as a JSON API.
 - **PostgreSQL + SQLAlchemy over SQLite.** UUID primary keys match the `ticket_id` already generated and returned to the caller, and a real server process is closer to an actual deployment than a file-based DB.
 - **`MOCK_MODE` as an explicit escape hatch, not a silent default.** It lets the form and test suite run without an API key, but stays off by default and is called out in `.env.example` and this README so it's never mistaken for the real classification path.
-- **Web-form manual-routing baseline is illustrative, not measured.** `MANUAL_ROUTING_SECONDS = 50` in `app/web.py` is a fixed placeholder used only to render a speedup line in the UI. The methodologically real manual-vs-AI comparison — hand-timed per ticket — is `scripts/compare_times.py` / `results/comparison.md`, not this constant.
+- **Web-form manual-routing line is illustrative, not measured.** The "manual routing takes 3-5 minutes" text in `index.html` is a static string, not derived from data. The methodologically real manual-vs-AI comparison — hand-timed per ticket — is `scripts/compare_times.py` / `results/comparison.md`.
+- **`/run-demo` doesn't persist.** It calls `route_ticket()` directly instead of `_route_and_persist()`, the same way `scripts/run_batch.py` does, so repeatedly demoing the sidebar in the browser doesn't fill the `tickets` table with duplicate demo rows.
 
 ## Challenges & Trade-offs
 

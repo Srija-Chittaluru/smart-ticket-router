@@ -23,8 +23,94 @@ body{
 
 .container{
     width:90%;
-    max-width:900px;
+    max-width:1280px;
     margin:40px auto;
+}
+
+.layout{
+    display:flex;
+    align-items:flex-start;
+    gap:24px;
+    margin-top:30px;
+    flex-wrap:wrap;
+}
+
+.main{
+    flex:1 1 600px;
+    min-width:0;
+}
+
+.main > *:first-child{
+    margin-top:0;
+}
+
+.sidebar{
+    flex:0 0 300px;
+    background:white;
+    border-radius:16px;
+    padding:24px;
+    box-shadow:0 8px 25px rgba(0,0,0,.08);
+}
+
+.sidebar h2{
+    color:#1e3a8a;
+    margin-bottom:16px;
+    font-size:18px;
+}
+
+.demo-list{
+    max-height:420px;
+    overflow-y:auto;
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+}
+
+.demo-item{
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    padding:10px 12px;
+    font-size:13px;
+    border-bottom:1px solid #f1f5f9;
+    cursor:pointer;
+}
+
+.demo-item:last-child{
+    border-bottom:none;
+}
+
+.demo-item input{
+    margin-top:3px;
+}
+
+.demo-id{
+    color:#6b7280;
+    font-weight:700;
+    margin-right:4px;
+}
+
+.sidebar button{
+    margin-top:16px;
+}
+
+.demo-table{
+    width:100%;
+    border-collapse:collapse;
+    margin-top:16px;
+    font-size:14px;
+}
+
+.demo-table th,
+.demo-table td{
+    text-align:left;
+    padding:10px 12px;
+    border-bottom:1px solid #e5e7eb;
+}
+
+.demo-table th{
+    color:#6b7280;
+    font-size:12px;
+    text-transform:uppercase;
 }
 
 .header{
@@ -269,6 +355,10 @@ Receive category, priority, assigned team, and reasoning in seconds.
 
 </div>
 
+<div class="layout">
+
+<div class="main">
+
 <div class="card">
 
 <h2>Submit Support Ticket</h2>
@@ -372,6 +462,74 @@ placeholder="Example: I paid for my subscription but my account is still locked.
 </div>
 
 {% endif %}
+
+{% if demo_results %}
+
+<div class="result-card">
+
+<div class="result-title">
+
+<h2>Demo Batch Results ({{ demo_results|length }})</h2>
+
+</div>
+
+<table class="demo-table">
+<tr>
+<th>#</th>
+<th>Message</th>
+<th>Category</th>
+<th>Priority</th>
+<th>Assigned Team</th>
+<th>Seconds</th>
+</tr>
+{% for row in demo_results %}
+<tr>
+<td>{{ row.id }}</td>
+<td>{{ row.message|truncate(60) }}</td>
+<td>{{ row.category }}</td>
+<td>
+{% if row.priority=="High" %}
+<span class="priority-high">🔴 HIGH</span>
+{% elif row.priority=="Medium" %}
+<span class="priority-medium">🟠 MEDIUM</span>
+{% else %}
+<span class="priority-low">🟢 LOW</span>
+{% endif %}
+</td>
+<td>{{ row.assigned_team }}</td>
+<td>{{ row.seconds }}</td>
+</tr>
+{% endfor %}
+</table>
+
+</div>
+
+{% endif %}
+
+</div>
+
+<div class="sidebar">
+
+<h2>📋 Demo Tickets ({{ demo_tickets|length }})</h2>
+
+<form method="POST" action="/run-demo">
+
+<div class="demo-list">
+{% for ticket in demo_tickets %}
+<label class="demo-item">
+<input type="checkbox" name="ticket_ids" value="{{ ticket.id }}" {% if selected_ids and ticket.id in selected_ids %}checked{% endif %}>
+<span><span class="demo-id">#{{ ticket.id }}</span>{{ ticket.message|truncate(70) }}</span>
+</label>
+{% endfor %}
+</div>
+
+<button type="submit">▶ Run Selected</button>
+
+</form>
+
+</div>
+
+</div>
 
 <div class="footer">
 
