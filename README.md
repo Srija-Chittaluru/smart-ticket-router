@@ -1,47 +1,160 @@
 # Smart Ticket Router
 
-An LLM-powered support ticket triage service. Given a raw customer support
-message, it returns structured JSON: `category`, `priority` (High/Medium/Low),
-`assigned_team`, and a one-line `reasoning` for the decision — plus a
-`clarification_needed` flag for messages too vague to confidently route.
+A FastAPI service that classifies raw customer support messages into a fixed
+routing taxonomy — category, priority, assigned team, and a one-sentence
+justification — using the OpenAI API's structured output mode. Tickets that
+are successfully classified and assigned to a real team are persisted to
+PostgreSQL with a generated ticket ID; everything else (gibberish, off-topic
+chat, failed classification) is returned to the caller but never written to
+the database.
 
-Built for the "Smart Ticket Router" mission: prompt design for structured
-output, JSON schema enforcement, handling AI unreliability, and building a
-reusable classification service behind a web form. Every ticket that gets
-routed to a real team is persisted to PostgreSQL with a unique ticket ID;
-tickets that can't be meaningfully routed (gibberish, out-of-scope chat, or
-a failed AI classification) are flagged with `assigned_team: "None"` (or
-`is_fallback`), returned to the caller, but never written to the database.
+## Problem Statement
 
-## How it works
+Manually triaging a support ticket means a human reads the message and
+decides, by judgment, what category it belongs to, how urgent it is, and
+which team should own it. That's slow, inconsistent between agents, and
+easy to get wrong under an angry or vague message. It also doesn't produce
+structured data — "someone read it and decided" doesn't give you a
+`category` / `priority` / `assigned_team` you can route or report on.
 
-- `app/schema.py` — the taxonomy (categories/priorities/teams), the strict
-  JSON Schema sent to the model, and the system prompt with explicit rubrics
-  for priority (impact-based, not tone-based) and edge-case handling.
-- `app/router.py` — `route_ticket(message)`, the reusable core function.
-  Calls the OpenAI Chat Completions API with `response_format:
-  json_schema` (strict mode) so the model is constrained to emit only valid,
-  schema-conforming JSON. On top of that, it independently re-validates the
-  parsed JSON against the schema and required fields, retries up to 3 times
-  with backoff on a parse/validation/API failure, and — if every attempt
-  still fails — returns a safe, clearly-labeled fallback classification
-  instead of raising, so a malformed AI response can never crash the caller.
-- `app/web.py` + `app/templates/index.html` — a minimal FastAPI web form
-  (and a `/api/route` JSON endpoint) for live demoing. Generates a UUID and
-  saves the ticket to PostgreSQL only when it was routed to a real team
-  (`assigned_team != "None"`) and classification didn't fall back; otherwise
-  `ticket_id` is returned as `null`.
-- `app/db.py` — SQLAlchemy engine/session setup, the `Ticket` ORM model
-  (mirrors the `tickets` table), `init_db()` (creates the table on
-  startup), and `get_db()` (per-request database session for FastAPI).
-- `scripts/run_batch.py` — batch-routes the demo tickets by calling
-  `route_ticket()` directly and records timing, for the manual-vs-AI
-  comparison below.
-- `data/sample_tickets.json` — 20 demo tickets, including the 3 required
-  edge cases and 5 tickets with known/obvious severity for priority
-  sanity-checking.
+Handing this to an LLM directly doesn't solve it either: a plain
+prompt-and-parse approach can return prose instead of JSON, invent a
+category that isn't in your taxonomy, or fail outright — and a triage
+service that raises an exception on a malformed ticket has thrown the
+ticket away. This project constrains the model to a fixed schema, checks
+its own output rather than trusting the API, and always returns a usable
+result even when classification fails.
 
-## Setup
+## Features
+
+- **Schema-constrained classification** — `category`, `priority`,
+  `assigned_team`, `reasoning`, and `clarification_needed` are generated
+  under an OpenAI Structured Outputs schema (`strict: true`), so the model
+  can only emit values from the fixed enums defined in `app/schema.py`.
+- **Independent re-validation** — the parsed JSON is checked again with
+  `jsonschema` and a required-field check, rather than trusting that the
+  API's strict mode was honored.
+- **Retry + deterministic fallback** — up to 3 attempts with linear
+  backoff on a parse/validation/API failure; if every attempt fails, a
+  fixed fallback record (`Tier1 Support`, `clarification_needed: true`) is
+  returned instead of an exception.
+- **Impact-based priority rubric** — the prompt explicitly instructs the
+  model to score priority from described business/user impact, not from
+  tone, punctuation, or capitalization.
+- **Deterministic multi-issue resolution** — when a ticket spans two
+  categories (e.g. billing + account access), a fixed precedence order
+  picks exactly one category; the rest is only surfaced in `reasoning`.
+- **Out-of-scope / gibberish detection** — greetings, small talk, and
+  unrelated requests (jokes, weather, translation) are recognized as not
+  being support tickets at all and routed to `assigned_team: "None"`.
+- **Selective persistence** — a ticket is only written to Postgres when
+  classification succeeded *and* a real team was assigned; otherwise
+  `ticket_id` comes back `null` and nothing is stored.
+- **Two entry points, one core function** — an HTML form and a JSON API
+  (`POST /api/route`) both call the same `route_ticket()`.
+- **Offline dev mode** — `MOCK_MODE=1` swaps the OpenAI call for a
+  deterministic keyword classifier, for developing/testing the form and
+  running the test suite without an API key or cost.
+- **Batch timing tooling** — `scripts/run_batch.py` routes a JSON file of
+  tickets and records per-ticket timing; `scripts/compare_times.py` joins
+  that against hand-timed manual routing to produce a manual-vs-AI speedup
+  table.
+
+## Architecture / Workflow
+
+```mermaid
+flowchart TD
+    A["Client\n(web form or POST /api/route)"] --> B["route_ticket(message)\napp/router.py"]
+    B --> C{"MOCK_MODE=1?"}
+    C -- yes --> D["_mock_classify()\nkeyword rules"]
+    C -- no --> E["OpenAI Chat Completions\nresponse_format=json_schema, strict"]
+    E --> F["json.loads +\njsonschema.validate +\nrequired-field check"]
+    F -- valid --> G["classification dict\nis_fallback=False"]
+    F -- invalid / API error --> H{"attempt < 3?"}
+    H -- yes --> I["sleep(backoff), retry"] --> E
+    H -- no --> J["FALLBACK_RESPONSE\nis_fallback=True"]
+    D --> G
+    G --> K["web.py: _route_and_persist()"]
+    J --> K
+    K --> L{"is_fallback OR\nassigned_team == 'None'?"}
+    L -- no --> M["uuid4() ticket_id\nINSERT into tickets (Postgres)"]
+    L -- yes --> N["ticket_id = null\nnot persisted"]
+    M --> O["JSON / HTML response"]
+    N --> O
+```
+
+`app/schema.py` owns the taxonomy and the system prompt; `app/router.py`
+owns the call/validate/retry/fallback logic and is the only place that
+talks to OpenAI; `app/web.py` owns the HTTP layer and the persistence
+decision; `app/db.py` owns the SQLAlchemy model and session lifecycle.
+
+## Tech Stack
+
+**Backend**
+
+| Technology | Role |
+|---|---|
+| Python 3.9+ | Runtime |
+| FastAPI | HTTP layer — HTML form routes + `/api/route` JSON endpoint, request validation via Pydantic |
+| Uvicorn | ASGI server |
+| Jinja2 | Renders `app/templates/index.html` |
+| python-multipart | Parses the form POST body |
+| python-dotenv | Loads `.env` in `app/db.py`, `app/web.py`, `scripts/run_batch.py` |
+
+**AI / LLM**
+
+| Technology | Role |
+|---|---|
+| OpenAI Chat Completions API | Ticket classification (default model: `gpt-4o-mini`, set via `OPENAI_MODEL`) |
+| Structured Outputs (`response_format: json_schema`, `strict: true`) | Constrains the model to the schema in `app/schema.py` |
+| jsonschema | Independent re-validation of the parsed response |
+
+**Database**
+
+| Technology | Role |
+|---|---|
+| PostgreSQL | Stores routed tickets |
+| SQLAlchemy 2.0 | ORM (`Ticket` model), engine/session management |
+| psycopg2-binary | PostgreSQL driver |
+
+**Tools**
+
+| Technology | Role |
+|---|---|
+| pytest | Test suite; LLM calls mocked via `monkeypatch` at the `_call_llm` boundary |
+| argparse | CLI for `scripts/run_batch.py` and `scripts/compare_times.py` |
+| csv / statistics (stdlib) | Manual-vs-AI timing comparison |
+
+## Project Structure
+
+```
+app/
+  schema.py            taxonomy, JSON schema, system prompt
+  router.py             route_ticket() — the classification core
+  db.py                 SQLAlchemy engine/session, Ticket model, init_db(), get_db()
+  web.py                 FastAPI routes, persistence decision
+  templates/index.html  server-rendered form + result view
+data/
+  sample_tickets.json          20 demo tickets, incl. required edge cases
+  manual_timing_template.csv   hand-filled stopwatch times for the speedup comparison
+scripts/
+  run_batch.py         batch-routes a ticket file, records timing, writes results JSON
+  compare_times.py     joins AI + manual timings into a comparison table
+tests/
+  test_router.py       tests route_ticket() with the LLM call mocked
+```
+
+| Path | What it's for |
+|---|---|
+| `app/schema.py` | The single source of truth for the routing taxonomy (`CATEGORIES`, `PRIORITIES`, `TEAMS`), the JSON Schema sent to OpenAI, and the system prompt — including the priority rubric, the category precedence order, and the out-of-scope guardrail. Changing what the model can output means changing this file. |
+| `app/router.py` | `route_ticket(message)` — the only function that calls OpenAI. Handles the mock-mode branch, the retry loop, response validation, and the fallback path. Has no FastAPI or database dependency, so it's callable from the web app, the batch script, or a test, unchanged. |
+| `app/db.py` | The `Ticket` ORM model (mirrors the `tickets` table 1:1 with `route_ticket()`'s output fields), `init_db()` (called on FastAPI startup, creates the table if missing), and `get_db()` (per-request session dependency). |
+| `app/web.py` | FastAPI app: `GET /` and `POST /` for the HTML form, `POST /api/route` for JSON. `_route_and_persist()` is the shared logic that decides, after classification, whether the ticket gets written to Postgres. |
+| `data/sample_tickets.json` | 20 tickets used for manual QA and the batch script — 3 are the required edge cases (angry tone, vague message, multi-category), 5 are tagged with an expected severity for spot-checking the model's priority calls. |
+| `scripts/run_batch.py` | Calls `route_ticket()` directly (no HTTP) for every ticket in a JSON file, times each call, and writes a results file consumed by `compare_times.py`. |
+| `scripts/compare_times.py` | Reads the batch results plus a manually-filled CSV of stopwatch times and produces `results/comparison.md` — a per-ticket manual-vs-AI table and average speedup. |
+
+## Installation
 
 ```bash
 python3 -m venv .venv
@@ -49,193 +162,227 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# edit .env and set OPENAI_API_KEY=sk-...
+# then edit .env — see Environment Variables below
 ```
 
 Requires Python 3.9+ and an OpenAI API key with access to a model that
-supports Structured Outputs (default: `gpt-4o-mini`, configurable via
-`OPENAI_MODEL` in `.env`).
+supports Structured Outputs.
 
-### Database
-
-Requires a running PostgreSQL server. Easiest local option on Mac is
-[Postgres.app](https://postgresapp.com/) — install it, click **Initialize**,
-then create the database:
+**Database setup** — requires a running PostgreSQL server. On macOS,
+[Postgres.app](https://postgresapp.com/) is the fastest way to get one
+locally: install it, click **Initialize**, then:
 
 ```bash
 createdb ticket_router
 ```
 
-Set `DATABASE_URL` in `.env` to match your setup, e.g.:
+The `tickets` table itself is created automatically on app startup
+(`init_db()` in `app/db.py`) — there's no separate migration step.
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | — | Required unless `MOCK_MODE=1`. |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Any OpenAI model that supports Structured Outputs. |
+| `MOCK_MODE` | `0` | Set to `1` to route through a deterministic keyword classifier instead of calling OpenAI (offline dev/testing only). |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/ticket_router` | SQLAlchemy connection string for the `tickets` table. |
 
 ```
+OPENAI_API_KEY=sk-your-key-here
+OPENAI_MODEL=gpt-4o-mini
+MOCK_MODE=0
 DATABASE_URL=postgresql://<your-username>@localhost:5432/ticket_router
 ```
 
-The `tickets` table is created automatically on app startup (`init_db()`
-in `app/db.py`) — no manual migration step needed.
+## Running the Project
 
-## Running it
-
-### Web form
-
-Make sure PostgreSQL is running first (see Database setup above), then:
+**Web form**
 
 ```bash
 uvicorn app.web:app --reload
 ```
 
-Open `http://127.0.0.1:8000`, paste a ticket, click **Route Ticket**. There's
-also a JSON API at `POST /api/route` with body `{"message": "..."}`, for
-scripted testing — and interactive API docs at `http://127.0.0.1:8000/docs`.
+Open `http://127.0.0.1:8000`, submit a ticket, see the routing result.
+Interactive API docs (auto-generated by FastAPI) are at
+`http://127.0.0.1:8000/docs`.
 
-### Batch (the 20 demo tickets)
+**Batch run over the 20 demo tickets**
 
 ```bash
 mkdir -p results
 python scripts/run_batch.py data/sample_tickets.json --out results/ai_batch_results.json
 ```
 
-Prints each ticket's routing decision and timing, then a timing summary
-(count/total/avg/median seconds), and writes full results to
-`results/ai_batch_results.json`.
+Prints each ticket's decision and timing, then a summary
+(count/total/avg/median seconds).
 
-### Offline/dev mode (no API key)
+**Manual-vs-AI comparison**
 
-Set `MOCK_MODE=1` (in `.env` or the shell) to route tickets through a
-deterministic keyword-based stand-in instead of calling OpenAI. This is
-only for developing/testing the web form without burning API credits —
-**do not use it for the mentor demo**, since the mission is about the
-LLM's structured output behavior specifically.
+Fill in `manual_seconds` for each row in `data/manual_timing_template.csv`
+(a person timing themselves triaging each ticket by hand), then:
 
-### Tests
+```bash
+python scripts/compare_times.py results/ai_batch_results.json data/manual_timing_template.csv
+```
+
+Writes `results/comparison.md` with a per-ticket speedup table.
+
+**Offline / no API key**
+
+```bash
+MOCK_MODE=1 uvicorn app.web:app --reload
+```
+
+Routes through `_mock_classify()` (keyword-based) instead of OpenAI — for
+developing against the form without spending API credits. Not a
+substitute for the real classification path.
+
+**Tests**
 
 ```bash
 pytest tests/ -v
 ```
 
-Covers: empty input, very short input, malformed/incomplete LLM JSON
-(fallback path), and a well-formed response passing through — all without
-needing a live API key (LLM calls are mocked).
+Covers empty input, mock-mode short input, malformed/incomplete LLM JSON
+(fallback path), and a well-formed response passing through — the LLM
+call is mocked in every case, so no API key is needed to run the suite.
 
-## Handling AI unreliability
+## API Endpoints
 
-Three layers, from strongest to last-resort:
+| Method | Path | Body | Response |
+|---|---|---|---|
+| `GET` | `/` | — | Renders the HTML form |
+| `POST` | `/` | form-encoded `message` | Re-renders the form with the routing result |
+| `POST` | `/api/route` | `{"message": "string"}` | JSON: `category`, `priority`, `assigned_team`, `reasoning`, `clarification_needed`, `ticket_id`, `seconds` |
 
-1. **Structured Outputs (strict schema)** at the API level — the model is
-   constrained token-by-token to only produce JSON matching the schema in
-   `app/schema.py` (fixed enums for category/priority/team, all 5 fields
-   required, no extra fields).
-2. **Independent re-validation** in `route_ticket` — `json.loads` +
-   `jsonschema.validate` + an explicit required-field check, even though
-   strict mode should already guarantee this. Defense in depth against API
-   version differences or client bugs.
-3. **Retry with backoff, then safe fallback** — up to 3 attempts; if all
-   fail, returns a fixed fallback response (`category: General Inquiry`,
-   `priority: Medium`, `assigned_team: Tier1 Support`,
-   `clarification_needed: true`, and a `reasoning` that says classification
-   failed and it was routed for manual triage). The caller never sees an
-   exception or a crash for a well-formed input string.
+`ticket_id` is a UUID string when the ticket was persisted, `null`
+otherwise. `seconds` is the wall-clock time `route_ticket()` took,
+included for the manual-vs-AI comparison.
 
-`route_ticket()` also tags its return value with `is_fallback` (`True` only
-on that last-resort path). `app/web.py` uses this — together with
-`assigned_team`, see below — to skip persistence on failed or unroutable
-classifications.
+## Example Input and Output
 
-## Persisting tickets to PostgreSQL
-
-`app/web.py` only writes a ticket to the `tickets` table (via the `Ticket`
-model in `app/db.py`) when **both** of these hold:
-
-- classification succeeded (`is_fallback` is `False`) — i.e. the AI
-  response was valid/parseable after retries, per the fallback handling
-  above, and
-- a real team could be assigned (`assigned_team != "None"`) — i.e. the
-  message wasn't gibberish or an out-of-scope/non-support request (see
-  edge cases below).
-
-Only in that case is a `uuid.uuid4()` ticket ID generated and saved. For
-anything that fails either check, `ticket_id` is returned as `null` and
-nothing is written to the database.
-
-The saved row (`ticket_id`, `ticket_text`, `category`, `priority`,
-`assigned_team`, `reasoning`, `created_at`) and the `ticket_id` are
-returned alongside the existing JSON response, and shown in the web UI
-(the `Ticket ID` field is hidden in the UI when it's `null`).
-
-To inspect what's been stored:
+**Request**
 
 ```bash
-psql -d ticket_router -c "SELECT ticket_id, ticket_text, category, priority, assigned_team, created_at FROM tickets ORDER BY created_at DESC;"
+curl -X POST http://127.0.0.1:8000/api/route \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I was charged twice for my subscription this month and now I cannot even log in to check my account or dispute it."}'
 ```
 
-## Edge cases (required deliverable)
+**Response** (representative — `reasoning` is model-generated, so exact
+wording varies between calls; `category`/`priority`/`assigned_team` are
+stable at `temperature=0`)
 
-| # | Case | Input | Handling |
-|---|---|---|---|
-| 1 | Angry / emotional tone | `"This is RIDICULOUS, nothing works and I've been waiting 3 days!!!"` | Prompt explicitly instructs the model to base priority only on described impact ("nothing works" + 3-day duration = High), not on tone/punctuation/caps. Reasoning cites the outage duration, not the anger. |
-| 2 | Very short / vague message | `"broken"` | Prompt instructs the model to set `clarification_needed: true`, `category: "Unclassified"`, `priority: "Low"`, route to `Tier1 Support`, and explain in `reasoning` that there isn't enough information to classify and ask the customer for more detail. No crash. Ticket is still persisted (a real team was assigned). |
-| 3 | Ticket with multiple issues (fits 2+ categories) | `"I was charged twice for my subscription this month and now I can't even log in to check my account or dispute it."` (Billing & Payments vs. Account Access) | Prompt instructs the model to pick exactly one category using a fixed precedence order (Billing & Payments > Account Access > Backend Issue > Frontend Issue > Bug Report > Feature Request > General Inquiry) and mention the other detected issue(s) in `reasoning`. For this example, Billing & Payments wins by precedence. |
-| 4 | Invalid / gibberish input | random characters or text with no recognizable support request | Prompt instructs the model to not guess intent: set `category: "Unclassified"`, `priority: "Low"`, `assigned_team: "None"`, `clarification_needed: true`, and ask the user for a clear description in `reasoning`. Since `assigned_team` is `"None"`, `app/web.py` does **not** persist it — `ticket_id` comes back `null`. |
-| 5 | Out-of-scope / non-support request | `"hi"`, `"what's the weather today?"`, `"write me a poem"` | Prompt's "Guardrail: Out-of-Scope Requests" instructs the model to recognize greetings, casual chat, jokes, coding/math/translation/weather requests, etc. as not being a support ticket at all: `category: "Unclassified"`, `priority: "Low"`, `assigned_team: "None"`, `clarification_needed: true`. Same as gibberish, not persisted. |
-
-Cases 1–3 are ticket `id: 1, 2, 3` in `data/sample_tickets.json`. Cases 4–5
-have no dedicated sample ticket yet in that file.
-
-## Before/after: manual vs. AI routing time
-
-**Manual routing** (a support agent reading a ticket and deciding
-category/priority/team by hand) realistically takes anywhere from ~30-90+
-seconds per ticket depending on complexity/ambiguity, plus queueing delay
-before an agent even picks it up. **AI routing** via this service takes
-~1-3 seconds end-to-end (dominated by the API call), with no queueing
-delay since it runs synchronously on ticket arrival.
-
-To produce real numbers for the demo instead of just estimates:
-
-1. Run the AI side and capture timing automatically:
-   ```bash
-   python scripts/run_batch.py data/sample_tickets.json --out results/ai_batch_results.json
-   ```
-2. Fill in `data/manual_timing_template.csv` by having a person (you, or a
-   teammate acting as a support agent) read each of the 20 tickets and
-   time, with a stopwatch, how long it takes them to decide the
-   category/priority/team by hand.
-3. Generate the comparison table:
-   ```bash
-   python scripts/compare_times.py results/ai_batch_results.json data/manual_timing_template.csv
-   ```
-   This prints and writes `results/comparison.md` — a per-ticket
-   manual-vs-AI table plus average speedup, ready to show the mentor.
-
-## Priority defensibility
-
-Sample tickets 4, 5, 6, 7, 8 in `data/sample_tickets.json` are tagged with
-their expected severity (`note` field) so the mentor can spot-check the
-model's `reasoning` against an independent, obvious ground truth:
-
-- #4 (total outage, business-critical) → expect **High**
-- #5 (feature request, nothing broken) → expect **Low**
-- #6 (bug with a workaround) → expect **Medium**
-- #7 (billing error, no urgency) → expect **Medium**
-- #8 (suspected account compromise) → expect **High**
-
-## Project structure
-
+```json
+{
+  "category": "Billing & Payments",
+  "priority": "Medium",
+  "assigned_team": "Billing Team",
+  "reasoning": "The customer was charged twice this month for their subscription; a related account-access issue was also mentioned and may need separate follow-up.",
+  "clarification_needed": false,
+  "ticket_id": "3f1a9c2e-2b7e-4c1e-9a3b-7e6a2c9d4f10",
+  "seconds": 1.42
+}
 ```
-app/
-  schema.py       taxonomy + JSON schema + system prompt
-  router.py       route_ticket() — the reusable core service
-  db.py           SQLAlchemy engine/session, Ticket model, init_db(), get_db()
-  web.py          FastAPI web form + JSON API + ticket persistence
-  templates/
-    index.html
-data/
-  sample_tickets.json          20 demo tickets (incl. edge cases)
-  manual_timing_template.csv   fill in by hand for the before/after comparison
-scripts/
-  run_batch.py                 batch-routes demo tickets via route_ticket(), records timing
-  compare_times.py             builds the before/after table
-tests/
-  test_router.py
+
+This is the multi-category edge case: the message fits both "Billing &
+Payments" and "Account Access". The prompt's fixed precedence order picks
+Billing & Payments, and the secondary issue is only mentioned in
+`reasoning`, not returned as a second category.
+
+**Out-of-scope input** — nothing is persisted, `ticket_id` is `null`:
+
+```json
+{
+  "category": "Unclassified",
+  "priority": "Low",
+  "assigned_team": "None",
+  "reasoning": "This message does not describe a support issue; please submit a specific problem you're experiencing with the product.",
+  "clarification_needed": true,
+  "ticket_id": null,
+  "seconds": 0.91
+}
 ```
+
+## Design Decisions
+
+- **Structured Outputs over prompt-and-parse.** Asking the model to
+  "return JSON" in plain text and regex-parsing the reply means any
+  invented category or malformed field reaches the caller. `strict: true`
+  with an enum-constrained schema (`app/schema.py`) makes the model unable
+  to emit anything outside the fixed taxonomy in the first place.
+- **Re-validating anyway.** `route_ticket()` runs `jsonschema.validate`
+  and a required-field check on top of strict mode. Strict mode is a
+  guarantee from the API, not from the caller's own code — re-checking is
+  cheap insurance against a provider-side edge case the caller can't see.
+- **Fallback instead of raising.** A support ticket has to end up
+  somewhere. Letting a parse failure propagate as an exception means the
+  ticket is lost; returning a fixed fallback (`Tier1 Support`,
+  `clarification_needed: true`) after 3 retries keeps a human able to
+  triage it manually.
+- **Conditional persistence.** Only writing tickets that are both
+  successfully classified and assigned a real team keeps the `tickets`
+  table free of gibberish, off-topic chat, and failed-classification
+  noise — so anything queried from it later is an actual, actionable
+  ticket.
+- **FastAPI.** Pydantic request validation (`RouteRequest`) and
+  auto-generated `/docs` come for free, which matters for a service meant
+  to be exercised both through a form and as a JSON API.
+- **PostgreSQL + SQLAlchemy over SQLite.** UUID primary keys match the
+  `ticket_id` already being generated and returned to the caller, and a
+  real server process is closer to how this would actually be deployed
+  than a file-based database.
+- **`MOCK_MODE` as an explicit escape hatch, not a silent default.** It
+  exists so the form and test suite don't require an API key, but it's
+  off by default and called out in both `.env.example` and this README so
+  it's never mistaken for the real classification path.
+
+## Challenges & Trade-offs
+
+- **Single category, multiple issues.** A ticket can legitimately need two
+  teams (billing + account access). Forcing exactly one category via a
+  hardcoded precedence order in the prompt is a routing simplification,
+  not a routing engine — the second issue only exists as a sentence in
+  `reasoning`, not as structured data a second team could act on.
+- **Tone-based priority is a prompt-level rule, not a code-level one.**
+  Nothing in `router.py` can verify the model actually ignored a message's
+  ALL-CAPS tone when scoring priority — that's enforced entirely by the
+  system prompt's explicit rubric. `data/sample_tickets.json` tags 5
+  tickets with an expected severity specifically so this can be spot-checked
+  by a human against the model's actual `reasoning`, rather than assumed.
+- **The batch timing script is directional, not a benchmark.** Each call
+  in `run_batch.py` runs sequentially and its timing is dominated by
+  network latency to the OpenAI API — it's meant to produce one
+  manual-vs-AI speedup number for a demo, not a controlled performance
+  measurement.
+- **No auth on `/api/route`.** Fine for a local demo; anyone who can reach
+  the port can submit tickets and trigger persistence.
+- **Deterministic categories, non-deterministic wording.** `temperature=0`
+  makes `category`/`priority`/`assigned_team` stable for the same input,
+  but `reasoning` is still free-text generation — two runs of the same
+  message can produce differently worded (though similarly-reasoned)
+  justifications.
+
+## Future Improvements
+
+- Authentication (API key or JWT) on `/api/route` before exposing it
+  beyond a local demo.
+- Parallelize `scripts/run_batch.py` instead of routing tickets
+  sequentially.
+- A read-only view over the `tickets` table instead of ad-hoc `psql`
+  queries for inspecting stored data.
+- Structured secondary-issue output (e.g. a list field) instead of
+  folding multi-category tickets into free-text `reasoning`.
+- Exponential backoff with jitter in the retry loop, instead of the
+  current linear `0.5 * attempt` sleep, for handling API rate limits.
+- `Dockerfile` / `docker-compose.yml` for the app + Postgres, in place of
+  the manual Postgres.app + `createdb` setup step.
+- A CI workflow running `pytest` on push.
+
+## License
+
+No license file is included in this repository. All rights are reserved
+by the author; the code is shared for review purposes.
