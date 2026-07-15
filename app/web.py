@@ -71,6 +71,17 @@ def index(request: Request):
 
 @app.post("/", response_class=HTMLResponse)
 def submit(request: Request, message: str = Form(""), db: Session = Depends(get_db)):
+    if not message.strip():
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "result": None,
+                "message": message,
+                "error": "Please enter a ticket description before submitting.",
+            },
+        )
+
     result, elapsed = _route_and_persist(message, db)
     speedup = round(MANUAL_ROUTING_SECONDS / elapsed, 1) if elapsed > 0 else None
     return templates.TemplateResponse(
