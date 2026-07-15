@@ -18,6 +18,8 @@ load_dotenv()
 
 app = FastAPI()
 
+MANUAL_ROUTING_SECONDS = 50
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
@@ -70,8 +72,17 @@ def index(request: Request):
 @app.post("/", response_class=HTMLResponse)
 def submit(request: Request, message: str = Form(""), db: Session = Depends(get_db)):
     result, elapsed = _route_and_persist(message, db)
+    speedup = round(MANUAL_ROUTING_SECONDS / elapsed, 1) if elapsed > 0 else None
     return templates.TemplateResponse(
-        "index.html", {"request": request, "result": result, "message": message, "elapsed": round(elapsed, 2)}
+        "index.html",
+        {
+            "request": request,
+            "result": result,
+            "message": message,
+            "elapsed": round(elapsed, 2),
+            "manual_seconds": MANUAL_ROUTING_SECONDS,
+            "speedup": speedup,
+        },
     )
 
 

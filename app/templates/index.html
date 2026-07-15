@@ -347,6 +347,16 @@ placeholder="Example: I paid for my subscription but my account is still locked.
 ⚡ Routed successfully in <strong>{{ elapsed }} seconds</strong>
 </div>
 
+<div class="meta">
+🕒 Manual routing takes <strong>{{ manual_seconds }} seconds</strong>
+</div>
+
+{% if speedup %}
+<div class="meta">
+🚀 That's <strong>{{ speedup }}x faster</strong> than manual routing
+</div>
+{% endif %}
+
 </div>
 
 {% endif %}
